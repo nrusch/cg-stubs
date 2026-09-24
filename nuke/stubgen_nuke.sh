@@ -1,23 +1,33 @@
-#!/bin/bash
+#!/bin/env bash
 
-set -e
+set -euo pipefail
 
-REPO_PATH=$(git rev-parse --show-toplevel)
 
-setpkg -c nuke-13
+[[ -z "${NUKE_ROOT:-}" ]] && {
+    msg="NUKE_ROOT is not set, or set to an empty value in the environment. "
+    msg+="Consider setting it in nuke/.env."
+    >&2 echo "${msg}"
+    exit 1
+}
 
-outdir=$REPO_PATH/nuke/stubs/
+[[ ! -d "${NUKE_ROOT}" ]] && {
+    >&2 echo "NUKE_ROOT ${NUKE_ROOT} is not a directory."
+    exit 1
+}
 
-# using $NUKE_APP/python3 crashes in my latest tests
-# must import nuke to make nuke modules available, but this consumes sys.argv, so we have to get a bit hacky
-export PYTHONPATH=$REPO_PATH/../mypy
 
-$REPO_PATH/nuke/bin/nukepy -c "import _nuke;import sys;sys.argv=['foo', '-o=$outdir', '-m', '_nuke', '-p', 'nuke_internal', '-m', '_curveknob', '-m', '_nuke_color', '-m', '_curvelib', '-m', '_geo', '-m', '_localization', '-m', '_splinewarp']; import mypy.stubgen;mypy.stubgen.main()"
+# Get this Nuke's Python interpreter.
+readarray -d '' nuke_py_interpreter < <(
+    find "${NUKE_ROOT}" -maxdepth 1 -regextype posix-extended -regex '.*/python[0-9]\.[0-9]{1,2}' -type f -print0
+)
 
-sed -i 's/\bstring\b/str/g' $outdir/_nuke.pyi
-sed -i 's/MenuorNone/Optional[Menu]/g' $outdir/_nuke.pyi
-sed -i 's/\bBool\b/bool/g' $outdir/_nuke.pyi
+(( ${#nuke_py_interpreter[@]} == 0 )) && {
+    >&2 echo "Cannot locate Nuke's python interpreter in ${NUKE_ROOT}."
+    exit 1
+}
 
-rm -rf $outdir/nuke
-mv $outdir/nuke_internal $outdir/nuke
-#mv .out/* $outdir/
+(( ${#nuke_py_interpreter[@]} > 1 )) && {
+    echo "Found multiple Nuke python interpreters in ${NUKE_ROOT}, proceeding with the first one."
+}
+echo "Running uv with Nuke's python interpreter ${nuke_py_interpreter[0]}"
+uv run --only-dev --python "${nuke_py_interpreter[0]}" --reinstall-package stubgenlib nuke_shim.py
